@@ -60,10 +60,6 @@ const (
 	taskHandleVersion = 1
 )
 
-const (
-	authHelperPrefix = "docker-credential-"
-)
-
 var (
 	// pluginInfo describes the plugin
 	pluginInfo = &base.PluginInfoResponse{
@@ -125,7 +121,7 @@ var (
 		"entrypoint":  hclspec.NewAttr("entrypoint", "list(string)", false),
 		"memory_swap": hclspec.NewDefault(
 			hclspec.NewAttr("memory_swap", "string", false),
-			hclspec.NewLiteral("0"),
+			hclspec.NewLiteral(`"0m"`),
 		),
 		"memory_swappiness": hclspec.NewDefault(
 			hclspec.NewAttr("memory_swappiness", "number", false),
@@ -459,7 +455,8 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	containerName := cfg.Name + "-" + cfg.AllocID
 	containerConfig.ContainerName = containerName
 
-	authFunc := d.resolveRegistryAuthentication(&driverConfig, driverConfig.Image)
+	repo, _ := parseContainerImage(driverConfig.Image)
+	authFunc := d.resolveRegistryAuthentication(&driverConfig, repo)
 
 	containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, authFunc)
 	if err != nil {
@@ -497,14 +494,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	containerConfig.MemoryHardLimit = cfg.Resources.NomadResources.Memory.MemoryMaxMB * 1024 * 1024
 	containerConfig.CPUShares = cfg.Resources.LinuxResources.CPUShares
 
-	if driverConfig.MemorySwap != "0" {
-		swap, err := memoryInBytes(driverConfig.MemorySwap)
-		if err != nil {
-			return nil, nil, err
-		}
-		containerConfig.MemorySwap = swap
+	swap, err := memoryInBytes(driverConfig.MemorySwap)
+	if err != nil {
+		return nil, nil, err
 	}
-
+	containerConfig.MemorySwap = swap
 	containerConfig.MemorySwappiness = driverConfig.MemorySwappiness
 
 	container, err := d.createContainer(&containerConfig, &driverConfig)
