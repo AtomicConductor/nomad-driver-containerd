@@ -12,21 +12,14 @@ test_annotations_nomad_job() {
 
     # Even though $(nomad job status) reports job status as "running"
     # The actual container process might not be running yet.
-    # We need to wait for actual container to start running before trying exec.
-    echo "INFO: Wait for ${job_name} container to get into RUNNING state, before trying exec."
+    echo "INFO: Wait for ${job_name} container to get into RUNNING state"
     is_container_active ${job_name} true
 
     annotations_status=$(nomad job status -short annotations|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
     if [ annotations_status != "running" ];then
-        echo "ERROR: Error in getting annotations job status."
+        echo "ERROR: Error in getting annotations job status. Has status of '$annotations_status'"
         exit 1
     fi
-
-    # Even though $(nomad job status) reports annotations job status as "running"
-    # The actual container process might not be running yet.
-    # We need to wait for actual container to start running before trying exec.
-    echo "INFO: Wait for annotations container to get into RUNNING state, before trying exec."
-    is_container_active annotations false
 
     echo "INFO: Check annotations are found when inspecting container"
     export CONTAINERD_NAMESPACE=nomad; ctr containers ls| grep annotations | cut -d ' ' -f1 | xargs ctr containers info | jq '.Spec.annotations.test' | tr -d '"' | xargs -I % test % = "annotations"
