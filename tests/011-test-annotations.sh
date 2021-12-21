@@ -16,7 +16,7 @@ test_annotations_nomad_job() {
     is_container_active ${job_name} true
 
     annotations_status=$(nomad job status -short annotations|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
-    if [ annotations_status != "running" ];then
+    if [ "$annotations_status" != "running" ];then
         echo "ERROR: Error in getting annotations job status. Has status of '$annotations_status'"
         exit 1
     fi
@@ -31,8 +31,8 @@ test_annotations_nomad_job() {
     echo "INFO: Stopping nomad annotations job."
     nomad job stop -detach annotations
     annotations_status=$(nomad job status -short annotations|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
-    if [ $annotations_status != "dead(stopped)" ];then
-        echo "ERROR: Error in stopping annotations job."
+    if [ "$annotations_status" != "dead(stopped)" ];then
+        echo "ERROR: Error in stopping annotations job. Has status of '$annotations_status'"
         exit 1
     fi
 
