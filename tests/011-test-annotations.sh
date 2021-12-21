@@ -2,11 +2,19 @@
 
 source $SRCDIR/utils.sh
 
+job_name=annotations
+
 test_annotations_nomad_job() {
     pushd ~/go/src/github.com/Roblox/nomad-driver-containerd/example
 
     echo "INFO: Starting nomad annotations job using nomad-driver-containerd."
     nomad job run -detach annotations.nomad
+
+    # Even though $(nomad job status) reports job status as "running"
+    # The actual container process might not be running yet.
+    # We need to wait for actual container to start running before trying exec.
+    echo "INFO: Wait for ${job_name} container to get into RUNNING state, before trying exec."
+    is_container_active ${job_name} true
 
     annotations_status=$(nomad job status -short annotations|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
     if [ annotations_status != "running" ];then
