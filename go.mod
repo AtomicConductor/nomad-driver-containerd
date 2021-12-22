@@ -14,6 +14,7 @@ require (
 	github.com/hashicorp/consul-template v0.25.2
 	github.com/hashicorp/go-envparse v0.0.0-20190703193109-150b3a2a4611 // indirect
 	github.com/hashicorp/go-hclog v0.14.1
+	github.com/hashicorp/go-msgpack v1.1.5
 	github.com/hashicorp/go-uuid v1.0.2
 	github.com/hashicorp/nomad v1.1.4
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210326190908-1c3f411f0417
