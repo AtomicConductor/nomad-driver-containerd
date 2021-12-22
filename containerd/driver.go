@@ -88,6 +88,9 @@ var (
 			"username": hclspec.NewAttr("username", "string", true),
 			"password": hclspec.NewAttr("password", "string", true),
 		})),
+		"auth_helper": hclspec.NewBlock("auth_helper", false, hclspec.NewObject(map[string]*hclspec.Spec{
+			"helper": hclspec.NewAttr("helper", "string", true),
+		})),
 	})
 
 	// taskConfigSpec is the specification of the plugin's configuration for
@@ -95,17 +98,18 @@ var (
 	// this is used to validate the configuration specified for the plugin
 	// when a job is submitted.
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"image":      hclspec.NewAttr("image", "string", true),
-		"command":    hclspec.NewAttr("command", "string", false),
-		"args":       hclspec.NewAttr("args", "list(string)", false),
-		"cap_add":    hclspec.NewAttr("cap_add", "list(string)", false),
-		"cap_drop":   hclspec.NewAttr("cap_drop", "list(string)", false),
-		"cwd":        hclspec.NewAttr("cwd", "string", false),
-		"devices":    hclspec.NewAttr("devices", "list(string)", false),
-		"privileged": hclspec.NewAttr("privileged", "bool", false),
-		"pids_limit": hclspec.NewAttr("pids_limit", "number", false),
-		"pid_mode":   hclspec.NewAttr("pid_mode", "string", false),
-		"hostname":   hclspec.NewAttr("hostname", "string", false),
+		"image":       hclspec.NewAttr("image", "string", true),
+		"command":     hclspec.NewAttr("command", "string", false),
+		"args":        hclspec.NewAttr("args", "list(string)", false),
+		"annotations": hclspec.NewAttr("annotations", "list(map(string))", false),
+		"cap_add":     hclspec.NewAttr("cap_add", "list(string)", false),
+		"cap_drop":    hclspec.NewAttr("cap_drop", "list(string)", false),
+		"cwd":         hclspec.NewAttr("cwd", "string", false),
+		"devices":     hclspec.NewAttr("devices", "list(string)", false),
+		"privileged":  hclspec.NewAttr("privileged", "bool", false),
+		"pids_limit":  hclspec.NewAttr("pids_limit", "number", false),
+		"pid_mode":    hclspec.NewAttr("pid_mode", "string", false),
+		"hostname":    hclspec.NewAttr("hostname", "string", false),
 		"host_dns": hclspec.NewDefault(
 			hclspec.NewAttr("host_dns", "bool", false),
 			hclspec.NewLiteral("true"),
@@ -114,8 +118,17 @@ var (
 			hclspec.NewAttr("image_pull_timeout", "string", false),
 			hclspec.NewLiteral(`"5m"`),
 		),
-		"extra_hosts":     hclspec.NewAttr("extra_hosts", "list(string)", false),
-		"entrypoint":      hclspec.NewAttr("entrypoint", "list(string)", false),
+		"extra_hosts": hclspec.NewAttr("extra_hosts", "list(string)", false),
+		"entrypoint":  hclspec.NewAttr("entrypoint", "list(string)", false),
+
+		"memory_swap": hclspec.NewDefault(
+			hclspec.NewAttr("memory_swap", "string", false),
+			hclspec.NewLiteral(`"0m"`),
+		),
+		"memory_swappiness": hclspec.NewDefault(
+			hclspec.NewAttr("memory_swappiness", "number", false),
+			hclspec.NewLiteral("0"),
+		),
 		"seccomp":         hclspec.NewAttr("seccomp", "bool", false),
 		"seccomp_profile": hclspec.NewAttr("seccomp_profile", "string", false),
 		"shm_size":        hclspec.NewAttr("shm_size", "string", false),
@@ -151,11 +164,12 @@ var (
 
 // Config contains configuration information for the plugin
 type Config struct {
-	Enabled           bool         `codec:"enabled"`
-	ContainerdRuntime string       `codec:"containerd_runtime"`
-	StatsInterval     string       `codec:"stats_interval"`
-	AllowPrivileged   bool         `codec:"allow_privileged"`
-	Auth              RegistryAuth `codec:"auth"`
+	Enabled           bool               `codec:"enabled"`
+	ContainerdRuntime string             `codec:"containerd_runtime"`
+	StatsInterval     string             `codec:"stats_interval"`
+	AllowPrivileged   bool               `codec:"allow_privileged"`
+	Auth              RegistryAuth       `codec:"auth"`
+	AuthHelper        RegistryAuthHelper `codec:"auth_helper"`
 }
 
 // Volume, bind, and tmpfs type mounts are supported.
@@ -171,6 +185,11 @@ type Mount struct {
 type RegistryAuth struct {
 	Username string `codec:"username"`
 	Password string `codec:"password"`
+}
+
+// RegistryAuthHelper info to pull image from registry when using helper binary.
+type RegistryAuthHelper struct {
+	Helper string `codec:"helper"`
 }
 
 // TaskConfig contains configuration information for a task that runs with
@@ -199,7 +218,10 @@ type TaskConfig struct {
 	ReadOnlyRootfs   bool               `codec:"readonly_rootfs"`
 	HostNetwork      bool               `codec:"host_network"`
 	Auth             RegistryAuth       `codec:"auth"`
+	Annotations      hclutils.MapStrStr `codec:"annotations"`
 	Mounts           []Mount            `codec:"mounts"`
+	MemorySwap       string             `codec:"memory_swap"`
+	MemorySwappiness int64              `codec:"memory_swappiness"`
 }
 
 // TaskState is the runtime state which is encoded in the handle returned to
@@ -411,7 +433,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("task with ID %q already started", cfg.ID)
 	}
 
-	var driverConfig TaskConfig
+	var (
+		driverConfig TaskConfig
+		err          error
+	)
+
 	if err := cfg.DecodeDriverConfig(&driverConfig); err != nil {
 		return nil, nil, fmt.Errorf("failed to decode driver config: %v", err)
 	}
@@ -434,8 +460,10 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	containerName := cfg.Name + "-" + cfg.AllocID
 	containerConfig.ContainerName = containerName
 
-	var err error
-	containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, &driverConfig.Auth)
+	repo, _ := parseContainerImage(driverConfig.Image)
+	authFunc := d.resolveRegistryAuthentication(&driverConfig, repo)
+
+	containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, authFunc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in pulling image %s: %v", driverConfig.Image, err)
 	}
@@ -465,11 +493,20 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		containerConfig.NetworkNamespacePath = cfg.NetworkIsolation.Path
 	}
 
+	containerConfig.Annotations = driverConfig.Annotations
+
 	// memory and cpu are coming from the resources stanza of the nomad job.
 	// https://www.nomadproject.io/docs/job-specification/resources
 	containerConfig.MemoryLimit = cfg.Resources.NomadResources.Memory.MemoryMB * 1024 * 1024
 	containerConfig.MemoryHardLimit = cfg.Resources.NomadResources.Memory.MemoryMaxMB * 1024 * 1024
 	containerConfig.CPUShares = cfg.Resources.LinuxResources.CPUShares
+
+	swap, err := memoryInBytes(driverConfig.MemorySwap)
+	if err != nil {
+		return nil, nil, err
+	}
+	containerConfig.MemorySwap = swap
+	containerConfig.MemorySwappiness = driverConfig.MemorySwappiness
 
 	container, err := d.createContainer(&containerConfig, &driverConfig)
 	if err != nil {
