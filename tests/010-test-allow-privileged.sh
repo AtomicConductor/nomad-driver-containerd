@@ -23,7 +23,7 @@ test_allow_privileged() {
 
     echo "INFO: Checking status of ${job_name} job."
     nomad job status
-    alloc_id=$(nomad job status ${job_name}|grep -e failed -e pending |awk 'NR==1'|cut -d ' ' -f 1)
+    alloc_id=$(nomad job status ${job_name}|grep failed |awk 'NR==1'|cut -d ' ' -f 1)
     output=$(nomad alloc status $alloc_id)
     echo -e "$output" |grep "Running privileged jobs are not allowed" &>/dev/null
     if [ $? -ne 0 ];then
