@@ -84,7 +84,7 @@ setup() {
 	# Change $(pwd) to /tmp
 	pushd /tmp
 
-	mkdir -p /etc/containerd/
+	sudo mkdir -p /etc/containerd/
 
 	# Install containerd 1.5.5
 	curl -L -o containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz
