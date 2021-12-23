@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -ex
+
 source $SRCDIR/utils.sh
 job_name=privileged-not-allowed
 
