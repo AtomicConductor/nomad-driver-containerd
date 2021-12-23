@@ -136,7 +136,7 @@ EOF
   sudo chmod a+rx runsc containerd-shim-runsc-v1
   sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin
 
-  cat << EOF > /etc/containerd/config.toml
+  sudo tee <<EOF /etc/containerd/config.toml >/dev/null
 version = 2
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
   runtime_type = "io.containerd.runc.v2"
