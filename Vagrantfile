@@ -62,7 +62,7 @@ Vagrant.configure("2") do |config|
     if [ ! -f "/usr/local/bin/runsc" ]; then
         ARCH=$(uname -m)
         URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
-        wget ${URL}/runsc ${URL}/runsc.sha512 \
+        wget -q ${URL}/runsc ${URL}/runsc.sha512 \
         ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
         sha512sum -c runsc.sha512 \
         -c containerd-shim-runsc-v1.sha512

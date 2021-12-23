@@ -84,6 +84,8 @@ setup() {
 	# Change $(pwd) to /tmp
 	pushd /tmp
 
+	mkdir -p /etc/containerd/
+
 	# Install containerd 1.5.5
 	curl -L -o containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz
 	sudo tar -C /usr/local -xzf containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz
@@ -124,7 +126,7 @@ EOF
 	# install gvisor and restart containerd service
   ARCH=$(uname -m)
   URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
-  wget ${URL}/runsc ${URL}/runsc.sha512 \
+  wget -q ${URL}/runsc ${URL}/runsc.sha512 \
   ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
   sha512sum -c runsc.sha512 \
   -c containerd-shim-runsc-v1.sha512
