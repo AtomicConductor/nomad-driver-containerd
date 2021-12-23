@@ -29,15 +29,13 @@ test_annotations_nomad_job() {
     fi
 
     echo "INFO: Stopping nomad annotations job."
-    nomad job stop -detach annotations
+    nomad job stop -detach -purge annotations
     annotations_status=$(nomad job status -short annotations|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
     if [ "$annotations_status" != "dead(stopped)" ];then
         echo "ERROR: Error in stopping ${job_name} job. Has status of '$annotations_status'"
         exit 1
     fi
 
-    echo "INFO: purge nomad annotations job."
-    nomad job stop -detach -purge annotations
     popd
 }
 
