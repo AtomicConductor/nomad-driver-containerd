@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 source $SRCDIR/utils.sh
 
 job_name=annotations
