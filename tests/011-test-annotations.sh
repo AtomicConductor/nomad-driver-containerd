@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 source $SRCDIR/utils.sh
 
 job_name=annotations
@@ -22,7 +24,7 @@ test_annotations_nomad_job() {
     fi
 
     echo "INFO: Check annotations are found when inspecting container"
-    export CONTAINERD_NAMESPACE=nomad; ctr containers ls| grep annotations | cut -d ' ' -f1 | xargs ctr containers info | jq '.Spec.annotations.test' | tr -d '"' | xargs -I % test % = "annotations"
+    sudo ctr -n nomad containers ls| grep annotations | cut -d ' ' -f1 | sudo xargs ctr -n nomad containers info | jq '.Spec.annotations.test' | tr -d '"' | xargs -I % test % = "annotations"
     if [ $? != 0 ]; then
         echo "ERROR: Error in finding annotations."
         exit 1
@@ -32,7 +34,7 @@ test_annotations_nomad_job() {
     nomad job stop -detach annotations
     annotations_status=$(nomad job status -short annotations|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
     if [ "$annotations_status" != "dead(stopped)" ];then
-        echo "ERROR: Error in stopping annotations job. Has status of '$annotations_status'"
+        echo "ERROR: Error in stopping ${job_name} job. Has status of '$annotations_status'"
         exit 1
     fi
 
