@@ -31,7 +31,7 @@ test_gvisor_nomad_job() {
     echo "INFO: Stopping nomad ${job_name} job."
     nomad job stop -detach ${job_name}
     gvisor_status=$(nomad job status -short ${job_name}|grep Status|awk '{split($0,a,"="); print a[2]}'|tr -d ' ')
-    if [ "$gvisor_status" != "running" ];then
+    if [ "$gvisor_status" != "dead(stopped)" ];then
         echo "ERROR: Error in getting ${job_name} job status. Has status of '$gvisor_status'"
         exit 1
     fi
