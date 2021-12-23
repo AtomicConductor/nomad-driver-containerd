@@ -23,8 +23,8 @@ test_annotations_nomad_job() {
 
     echo "INFO: Check annotations are found when inspecting container"
     sudo ctr -n nomad containers ls| grep annotations | cut -d ' ' -f1 | sudo xargs ctr -n nomad containers info | jq '.Spec.annotations.test' | tr -d '"' | xargs -I % test % = "annotations"
-    if [ $? != 0 ]; then
-        echo "ERROR: Error in finding annotations."
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR: Error in getting annotations from container"
         exit 1
     fi
 
