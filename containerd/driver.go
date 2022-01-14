@@ -587,6 +587,8 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		containerConfig.GPUCapabilities = []nvidia.Capability{nvidia.Utility}
 	}
 
+	containerConfig.User = cfg.User
+
 	container, err := d.createContainer(&containerConfig, &driverConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in creating container: %v", err)

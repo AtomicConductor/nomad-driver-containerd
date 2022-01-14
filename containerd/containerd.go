@@ -62,6 +62,7 @@ type ContainerConfig struct {
 	SecretsDirSrc         string
 	TaskDirDest           string
 	TaskDirSrc            string
+	User                  string
 }
 
 func (d *Driver) isContainerdRunning() (bool, error) {
@@ -471,6 +472,10 @@ func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskC
 	// NOTE: Only bridge networking mode is supported at this point.
 	if containerConfig.NetworkNamespacePath != "" {
 		opts = append(opts, oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace, Path: containerConfig.NetworkNamespacePath}))
+	}
+
+	if containerConfig.User != "" {
+		opts = append(opts, oci.WithUser(containerConfig.User))
 	}
 
 	ctxWithTimeout, cancel := context.WithTimeout(d.ctxContainerd, 30*time.Second)
