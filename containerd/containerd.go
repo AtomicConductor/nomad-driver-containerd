@@ -43,22 +43,17 @@ import (
 
 type ContainerConfig struct {
 	AllocDirDest          string
-	AllocDirDest          string
 	AllocDirSrc           string
 	Annotations           map[string]string
 	CPUShares             int64
-	CPUShares             int64
 	ContainerName         string
 	ContainerSnapshotName string
-	Env                   []string
 	Env                   []string
 	GPUCapabilities       []nvidia.Capability
 	GPUDevices            []string
 	Image                 containerd.Image
 	Labels                map[string]string
 	MemoryHardLimit       int64
-	MemoryHardLimit       int64
-	MemoryLimit           int64
 	MemoryLimit           int64
 	MemorySwap            int64
 	MemorySwappiness      int64
