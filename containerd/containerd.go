@@ -271,6 +271,7 @@ func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskC
 	var opts []oci.SpecOpts
 
 	if config.Entrypoint != nil {
+		opts = append(opts, oci.WithImageConfig(containerConfig.Image))
 		// WithProcessArgs replaces the args on the generated spec.
 		opts = append(opts, oci.WithProcessArgs(args...))
 	} else {
@@ -401,6 +402,12 @@ func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskC
 	for _, mount := range config.Mounts {
 		if (mount.Type == "bind" || mount.Type == "volume") && len(mount.Options) <= 0 {
 			return nil, fmt.Errorf("Options cannot be empty for mount type: %s. You need to atleast pass rbind and ro.", mount.Type)
+		}
+
+		// Allow paths relative to $NOMAD_TASK_DIR.
+		// More details: https://github.com/Roblox/nomad-driver-containerd/issues/116#issuecomment-983171458
+		if mount.Type == "bind" && strings.HasPrefix(mount.Source, "local") {
+			mount.Source = containerConfig.TaskDirSrc + mount.Source[5:]
 		}
 
 		m := buildMountpoint(mount.Type, mount.Target, mount.Source, mount.Options)
