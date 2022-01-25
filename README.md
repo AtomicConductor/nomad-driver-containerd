@@ -79,17 +79,29 @@ More detailed instructions are in the [`example README.md`](https://github.com/R
 
 To interact with `images` and `containers` directly, you can use [`nerdctl`](https://github.com/containerd/nerdctl) which is a docker compatible CLI for `containerd`. `nerdctl` is already installed in the vagrant VM at `/usr/local/bin`.
 
-## Supported options
+## Supported Options
 
 **Driver Config**
 
 | Option | Type | Required | Default | Description |
 | :---: | :---: | :---: | :---: | :--- |
 | **enabled** | bool | no | true | Enable/Disable task driver. |
-| **containerd_runtime** | string | yes | N/A | Runtime for containerd e.g. `io.containerd.runc.v1` or `io.containerd.runc.v2`. |
+| **containerd_runtime** | string | no | `io.containerd.runc.v2` | Runtime for containerd. |
 | **stats_interval** | string | no | 1s | Interval for collecting `TaskStats`. |
 | **allow_privileged** | bool | no | true | If set to `false`, driver will deny running privileged jobs. |
+| **allow_runtimes** | []string | no | `["runc", "runsc", "nvidia"]` | Runtimes that are allowed to be used. |
 | **auth** | block | no | N/A | Provide authentication for a private registry. See [Authentication](#authentication-private-registry) for more details. |
+| **auth_helper** | block | no | N/A | Lookup authentication information from external sources. See [Authentication Helper](example/agent-auth-helper.hcl) for more details. Order of precedence Job Auth, Config Auth, Config Auth Helper.  |
+| **nvidia_runtime** | string | no | `nvidia` | Runtime for nvidia. This is generally not required to specify since GPUs are part of OCI hooks using `runc` as the runtime. |
+
+## Supported Runtimes
+
+Valid options for `containerd_runtime` (**Driver Config**).
+
+- `io.containerd.runc.v1`: `runc` runtime that supports a single container.
+- `io.containerd.runc.v2` (Default): `runc` runtime that supports multiple containers per shim.
+- `io.containerd.runsc.v1`: `gVisor` is an OCI compliant container runtime which provides better security than `runc`. They achieve this by implementing a user space kernel written in go, which implements a substantial portion of the Linux system call interface. For more details, please check their [`official documentation`](https://gvisor.dev/docs/)
+- `io.containerd.nvidia.v1`: `nvidia` is a container runtime that supports GPU devices.
 
 **Task Config**
 
@@ -106,11 +118,15 @@ To interact with `images` and `containers` directly, you can use [`nerdctl`](htt
 | **pid_mode** | string | no | `host` or not set (default). Set to `host` to share the PID namespace with the host. |
 | **hostname** | string | no | The hostname to assign to the container. When launching more than one of a task (using `count`) with this option set, every container the task starts will have the same hostname. |
 | **host_dns** | bool | no | Default (`true`). By default, a container launched using `containerd-driver` will use host `/etc/resolv.conf`. This is similar to [`docker behavior`](https://docs.docker.com/config/containers/container-networking/#dns-services). However, if you don't want to use host DNS, you can turn off this flag by setting `host_dns=false`. |
+| **labels** | map[string]string | no | A map of labels to set on the container. |
+| **memory_swap** | string| no | Default ("0"). By default, no swap is used by the container. If you want to use swap, you can set `memory_swap` to a string representing the size of the swap. The host instance will also need to have swap enabled, along with swap being larger than the resource memory declared. |
+| **memory_swappiness** | int64 | no | Default(0). By default, the container will not be swapped out of memory. If you want to swap out of memory, you can set `memory_swappiness` to a float value between 0 and 100. |
 | **seccomp** | bool | no | Enable default seccomp profile. List of [`allowed syscalls`](https://github.com/containerd/containerd/blob/master/contrib/seccomp/seccomp_default.go#L51-L395). |
 | **seccomp_profile** | string | no | Path to custom seccomp profile. `seccomp` must be set to `true` in order to use `seccomp_profile`. The default `docker` seccomp profile found [`here`](https://github.com/moby/moby/blob/master/profiles/seccomp/default.json) can be used as a reference, and modified to create a custom seccomp profile. |
 | **shm_size** | string | no | Size of /dev/shm e.g. "128M" if you want 128 MB of /dev/shm. |
 | **sysctl** | map[string]string | no | A key-value map of sysctl configurations to set to the containers on start. |
 | **readonly_rootfs** | bool | no | Container root filesystem will be read-only. |
+| **runtime** | string | no | A string representing a configured runtime to pass to containerd. This is equivalent to the `--runtime` argument in the docker CLI. |
 | **host_network** | bool | no | Enable host network. This is equivalent to `--net=host` in docker. |
 | **extra_hosts** | []string | no | A list of hosts, given as host:IP, to be added to /etc/hosts. |
 | **cap_add** | []string | no | Add individual capabilities. |

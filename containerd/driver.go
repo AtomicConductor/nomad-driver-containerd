@@ -20,8 +20,11 @@ package containerd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/containerd/containerd/contrib/nvidia"
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
@@ -58,6 +61,12 @@ const (
 	// this is used to allow modification and migration of the task schema
 	// used by the plugin
 	taskHandleVersion = 1
+
+	// Nvidia-container-runtime environment variable names
+	nvidiaVisibleDevices = "NVIDIA_VISIBLE_DEVICES"
+
+	// nvidiaDriverCapabilities, environment variable containing a list which capabilities to be given to the container
+	nvidiaDriverCapabilities = "NVIDIA_DRIVER_CAPABILITIES"
 )
 
 var (
@@ -78,16 +87,27 @@ var (
 			hclspec.NewAttr("enabled", "bool", false),
 			hclspec.NewLiteral("true"),
 		),
-		"containerd_runtime": hclspec.NewAttr("containerd_runtime", "string", true),
+		"containerd_runtime": hclspec.NewAttr("containerd_runtime", "string", false),
 		"stats_interval":     hclspec.NewAttr("stats_interval", "string", false),
 		"allow_privileged": hclspec.NewDefault(
 			hclspec.NewAttr("allow_privileged", "bool", false),
 			hclspec.NewLiteral("true"),
 		),
+		"allow_runtimes": hclspec.NewDefault(
+			hclspec.NewAttr("allow_runtimes", "list(string)", false),
+			hclspec.NewLiteral(`["runc", "runsc", "nvidia"]`),
+		),
 		"auth": hclspec.NewBlock("auth", false, hclspec.NewObject(map[string]*hclspec.Spec{
 			"username": hclspec.NewAttr("username", "string", true),
 			"password": hclspec.NewAttr("password", "string", true),
 		})),
+		"auth_helper": hclspec.NewBlock("auth_helper", false, hclspec.NewObject(map[string]*hclspec.Spec{
+			"helper": hclspec.NewAttr("helper", "string", true),
+		})),
+		"nvidia_runtime": hclspec.NewDefault(
+			hclspec.NewAttr("nvidia_runtime", "string", false),
+			hclspec.NewLiteral(`"nvidia"`),
+		),
 	})
 
 	// taskConfigSpec is the specification of the plugin's configuration for
@@ -95,17 +115,18 @@ var (
 	// this is used to validate the configuration specified for the plugin
 	// when a job is submitted.
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"image":      hclspec.NewAttr("image", "string", true),
-		"command":    hclspec.NewAttr("command", "string", false),
-		"args":       hclspec.NewAttr("args", "list(string)", false),
-		"cap_add":    hclspec.NewAttr("cap_add", "list(string)", false),
-		"cap_drop":   hclspec.NewAttr("cap_drop", "list(string)", false),
-		"cwd":        hclspec.NewAttr("cwd", "string", false),
-		"devices":    hclspec.NewAttr("devices", "list(string)", false),
-		"privileged": hclspec.NewAttr("privileged", "bool", false),
-		"pids_limit": hclspec.NewAttr("pids_limit", "number", false),
-		"pid_mode":   hclspec.NewAttr("pid_mode", "string", false),
-		"hostname":   hclspec.NewAttr("hostname", "string", false),
+		"image":       hclspec.NewAttr("image", "string", true),
+		"command":     hclspec.NewAttr("command", "string", false),
+		"args":        hclspec.NewAttr("args", "list(string)", false),
+		"annotations": hclspec.NewAttr("annotations", "list(map(string))", false),
+		"cap_add":     hclspec.NewAttr("cap_add", "list(string)", false),
+		"cap_drop":    hclspec.NewAttr("cap_drop", "list(string)", false),
+		"cwd":         hclspec.NewAttr("cwd", "string", false),
+		"devices":     hclspec.NewAttr("devices", "list(string)", false),
+		"privileged":  hclspec.NewAttr("privileged", "bool", false),
+		"pids_limit":  hclspec.NewAttr("pids_limit", "number", false),
+		"pid_mode":    hclspec.NewAttr("pid_mode", "string", false),
+		"hostname":    hclspec.NewAttr("hostname", "string", false),
 		"host_dns": hclspec.NewDefault(
 			hclspec.NewAttr("host_dns", "bool", false),
 			hclspec.NewLiteral("true"),
@@ -114,13 +135,23 @@ var (
 			hclspec.NewAttr("image_pull_timeout", "string", false),
 			hclspec.NewLiteral(`"5m"`),
 		),
-		"extra_hosts":     hclspec.NewAttr("extra_hosts", "list(string)", false),
-		"entrypoint":      hclspec.NewAttr("entrypoint", "list(string)", false),
+		"extra_hosts": hclspec.NewAttr("extra_hosts", "list(string)", false),
+		"entrypoint":  hclspec.NewAttr("entrypoint", "list(string)", false),
+		"labels":      hclspec.NewAttr("labels", "list(map(string))", false),
+		"memory_swap": hclspec.NewDefault(
+			hclspec.NewAttr("memory_swap", "string", false),
+			hclspec.NewLiteral(`"0m"`),
+		),
+		"memory_swappiness": hclspec.NewDefault(
+			hclspec.NewAttr("memory_swappiness", "number", false),
+			hclspec.NewLiteral("0"),
+		),
 		"seccomp":         hclspec.NewAttr("seccomp", "bool", false),
 		"seccomp_profile": hclspec.NewAttr("seccomp_profile", "string", false),
 		"shm_size":        hclspec.NewAttr("shm_size", "string", false),
 		"sysctl":          hclspec.NewAttr("sysctl", "list(map(string))", false),
 		"readonly_rootfs": hclspec.NewAttr("readonly_rootfs", "bool", false),
+		"runtime":         hclspec.NewAttr("runtime", "string", false),
 		"host_network":    hclspec.NewAttr("host_network", "bool", false),
 		"auth": hclspec.NewBlock("auth", false, hclspec.NewObject(map[string]*hclspec.Spec{
 			"username": hclspec.NewAttr("username", "string", true),
@@ -150,54 +181,68 @@ var (
 
 // Config contains configuration information for the plugin
 type Config struct {
-	Enabled           bool         `codec:"enabled"`
-	ContainerdRuntime string       `codec:"containerd_runtime"`
-	StatsInterval     string       `codec:"stats_interval"`
-	AllowPrivileged   bool         `codec:"allow_privileged"`
-	Auth              RegistryAuth `codec:"auth"`
+	AllowPrivileged   bool                `codec:"allow_privileged"`
+	AllowRuntimes     []string            `codec:"allow_runtimes"`
+	Auth              RegistryAuth        `codec:"auth"`
+	AuthHelper        RegistryAuthHelper  `codec:"auth_helper"`
+	ContainerdRuntime string              `codec:"containerd_runtime"`
+	Enabled           bool                `codec:"enabled"`
+	GPURuntimeName    string              `codec:"nvidia_runtime"`
+	StatsInterval     string              `codec:"stats_interval"`
+	allowRuntimes     map[string]struct{} `codec:"-"`
 }
 
 // Volume, bind, and tmpfs type mounts are supported.
 // Mount contains configuration information about a mountpoint.
 type Mount struct {
-	Type    string   `codec:"type"`
-	Target  string   `codec:"target"`
-	Source  string   `codec:"source"`
 	Options []string `codec:"options"`
+	Source  string   `codec:"source"`
+	Target  string   `codec:"target"`
+	Type    string   `codec:"type"`
 }
 
 // Auth info to pull image from registry.
 type RegistryAuth struct {
-	Username string `codec:"username"`
 	Password string `codec:"password"`
+	Username string `codec:"username"`
+}
+
+// RegistryAuthHelper info to pull image from registry when using helper binary.
+type RegistryAuthHelper struct {
+	Helper string `codec:"helper"`
 }
 
 // TaskConfig contains configuration information for a task that runs with
 // this plugin
 type TaskConfig struct {
-	Image            string             `codec:"image"`
-	Command          string             `codec:"command"`
+	Annotations      hclutils.MapStrStr `codec:"annotations"`
 	Args             []string           `codec:"args"`
+	Auth             RegistryAuth       `codec:"auth"`
 	CapAdd           []string           `codec:"cap_add"`
 	CapDrop          []string           `codec:"cap_drop"`
+	Command          string             `codec:"command"`
 	Cwd              string             `codec:"cwd"`
 	Devices          []string           `codec:"devices"`
+	Entrypoint       []string           `codec:"entrypoint"`
+	ExtraHosts       []string           `codec:"extra_hosts"`
+	HostDNS          bool               `codec:"host_dns"`
+	HostNetwork      bool               `codec:"host_network"`
+	Hostname         string             `codec:"hostname"`
+	Image            string             `codec:"image"`
+	ImagePullTimeout string             `codec:"image_pull_timeout"`
+	Labels           hclutils.MapStrStr `codec:"labels"`
+	MemorySwap       string             `codec:"memory_swap"`
+	MemorySwappiness int64              `codec:"memory_swappiness"`
+	Mounts           []Mount            `codec:"mounts"`
+	PidMode          string             `codec:"pid_mode"`
+	PidsLimit        int64              `codec:"pids_limit"`
+	Privileged       bool               `codec:"privileged"`
+	ReadOnlyRootfs   bool               `codec:"readonly_rootfs"`
+	Runtime          string             `codec:"runtime"`
 	Seccomp          bool               `codec:"seccomp"`
 	SeccompProfile   string             `codec:"seccomp_profile"`
 	ShmSize          string             `codec:"shm_size"`
 	Sysctl           hclutils.MapStrStr `codec:"sysctl"`
-	Privileged       bool               `codec:"privileged"`
-	PidsLimit        int64              `codec:"pids_limit"`
-	PidMode          string             `codec:"pid_mode"`
-	Hostname         string             `codec:"hostname"`
-	HostDNS          bool               `codec:"host_dns"`
-	ImagePullTimeout string             `codec:"image_pull_timeout"`
-	ExtraHosts       []string           `codec:"extra_hosts"`
-	Entrypoint       []string           `codec:"entrypoint"`
-	ReadOnlyRootfs   bool               `codec:"readonly_rootfs"`
-	HostNetwork      bool               `codec:"host_network"`
-	Auth             RegistryAuth       `codec:"auth"`
-	Mounts           []Mount            `codec:"mounts"`
 }
 
 // TaskState is the runtime state which is encoded in the handle returned to
@@ -205,10 +250,10 @@ type TaskConfig struct {
 // This information is needed to rebuild the task state and handler during
 // recovery.
 type TaskState struct {
-	StartedAt     time.Time
 	ContainerName string
-	StdoutPath    string
+	StartedAt     time.Time
 	StderrPath    string
+	StdoutPath    string
 }
 
 type Driver struct {
@@ -323,6 +368,11 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 		}
 	}
 
+	config.allowRuntimes = make(map[string]struct{}, len(config.AllowRuntimes))
+	for _, r := range config.AllowRuntimes {
+		config.allowRuntimes[r] = struct{}{}
+	}
+
 	// Save the configuration to the plugin
 	d.config = &config
 
@@ -409,7 +459,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("task with ID %q already started", cfg.ID)
 	}
 
-	var driverConfig TaskConfig
+	var (
+		driverConfig TaskConfig
+		err          error
+	)
+
 	if err := cfg.DecodeDriverConfig(&driverConfig); err != nil {
 		return nil, nil, fmt.Errorf("failed to decode driver config: %v", err)
 	}
@@ -432,8 +486,10 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	containerName := cfg.Name + "-" + cfg.AllocID
 	containerConfig.ContainerName = containerName
 
-	var err error
-	containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, &driverConfig.Auth)
+	repo, _ := parseContainerImage(driverConfig.Image)
+	authFunc := d.resolveRegistryAuthentication(&driverConfig, repo)
+
+	containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, authFunc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in pulling image %s: %v", driverConfig.Image, err)
 	}
@@ -463,11 +519,73 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		containerConfig.NetworkNamespacePath = cfg.NetworkIsolation.Path
 	}
 
+	containerConfig.Annotations = driverConfig.Annotations
+	containerConfig.Labels = driverConfig.Labels
+
 	// memory and cpu are coming from the resources stanza of the nomad job.
 	// https://www.nomadproject.io/docs/job-specification/resources
 	containerConfig.MemoryLimit = cfg.Resources.NomadResources.Memory.MemoryMB * 1024 * 1024
 	containerConfig.MemoryHardLimit = cfg.Resources.NomadResources.Memory.MemoryMaxMB * 1024 * 1024
 	containerConfig.CPUShares = cfg.Resources.LinuxResources.CPUShares
+
+	swap, err := memoryInBytes(driverConfig.MemorySwap)
+	if err != nil {
+		return nil, nil, err
+	}
+	containerConfig.MemorySwap = swap
+	containerConfig.MemorySwappiness = driverConfig.MemorySwappiness
+
+	//Used in conjunction with the nomad-device-nvidia plugin, this environment variable will be set when having a device constraint of an `nvidia/gpu`.
+	//Check for runtimes, if GPU environment variable(`nvidiaVisibleDevices|NVIDIA_VISIBLE_DEVICES`) is set.
+	//Verify that runtime is allowed.
+	var containerRuntime string
+	if driverConfig.Runtime != "" {
+		containerRuntime = driverConfig.Runtime
+	} else {
+		containerRuntime = ""
+	}
+
+	if nvidiaDeviceIds, ok := cfg.DeviceEnv[nvidiaVisibleDevices]; ok {
+		if containerRuntime != "" && containerRuntime != d.config.GPURuntimeName {
+			return nil, nil, fmt.Errorf("conflicting runtime requests: gpu runtime %q conflicts with task runtime %q", d.config.GPURuntimeName, containerRuntime)
+		}
+		containerRuntime = d.config.GPURuntimeName
+
+		deviceIds := strings.Split(nvidiaDeviceIds, ",")
+		containerConfig.GPUDevices = deviceIds
+	}
+
+	if _, ok := d.config.allowRuntimes[containerRuntime]; !ok && containerRuntime != "" {
+		return nil, nil, fmt.Errorf("requested runtime %q is not allowed(%q)", containerRuntime, d.config.allowRuntimes)
+	}
+
+	//Check for capabilities based on task environment variables, if none are set, use 'utility' if gpus are part of
+	//definition.
+	if nvidiaCaps, ok := cfg.Env[nvidiaDriverCapabilities]; ok && containerRuntime == d.config.GPURuntimeName {
+		allCaps := make(map[string]nvidia.Capability)
+		selectedCapabilities := make([]nvidia.Capability, 0)
+
+		for _, capability := range nvidia.AllCaps() {
+			allCaps[string(capability)] = capability
+		}
+
+		for _, capability := range strings.Split(nvidiaCaps, ",") {
+			if capability == "all" {
+				selectedCapabilities = nvidia.AllCaps()
+				break
+			}
+
+			if capabilityName, ok := allCaps[capability]; ok {
+				selectedCapabilities = append(selectedCapabilities, capabilityName)
+			}
+		}
+
+		containerConfig.GPUCapabilities = selectedCapabilities
+	} else if _, ok := cfg.Env[nvidiaDriverCapabilities]; !ok && containerRuntime == d.config.GPURuntimeName {
+		//If the nvidia driver capabilities are not set, then set to 'utility' capability.
+		//Which allows nvidia-smi and NVML to be used.
+		containerConfig.GPUCapabilities = []nvidia.Capability{nvidia.Utility}
+	}
 
 	containerConfig.User = cfg.User
 

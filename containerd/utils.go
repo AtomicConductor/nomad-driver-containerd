@@ -19,11 +19,17 @@ package containerd
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
 
+	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/oci"
+	"github.com/containerd/containerd/plugin"
+	runcoptions "github.com/containerd/containerd/runtime/v2/runc/options"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -97,5 +103,77 @@ func WithMemoryLimits(soft, hard int64) oci.SpecOpts {
 			}
 		}
 		return nil
+	}
+}
+
+// buildRuntime sets the container runtime e.g. runc or runsc (gVisor).
+func buildRuntime(pluginRuntime, jobRuntime string) containerd.NewContainerOpts {
+	var (
+		runcOpts    runcoptions.Options
+		runtimeOpts interface{} = &runcOpts
+	)
+
+	// plugin.RuntimeRuncV2 = io.containerd.runc.v2
+	runtime := plugin.RuntimeRuncV2
+
+	if jobRuntime != "" {
+		if strings.HasPrefix(jobRuntime, "io.containerd.runc.") {
+			runtime = jobRuntime
+		} else {
+			runcOpts.BinaryName = jobRuntime
+		}
+	} else if pluginRuntime != "" {
+		if strings.HasPrefix(pluginRuntime, "io.containerd.runc.") {
+			runtime = pluginRuntime
+		} else {
+			runcOpts.BinaryName = pluginRuntime
+		}
+	}
+
+	return containerd.WithRuntime(runtime, runtimeOpts)
+}
+
+func WithSwap(swap int64, swapiness uint64) oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
+		if s.Linux != nil {
+			if s.Linux.Resources == nil {
+				s.Linux.Resources = &specs.LinuxResources{}
+			}
+			if s.Linux.Resources.Memory == nil {
+				s.Linux.Resources.Memory = &specs.LinuxMemory{}
+			}
+
+			if swap > 0 {
+				s.Linux.Resources.Memory.Swap = &swap
+			}
+			if swapiness > 0 {
+				s.Linux.Resources.Memory.Swappiness = &swapiness
+			}
+		}
+		return nil
+	}
+}
+
+func memoryInBytes(strmem string) (int64, error) {
+	l := len(strmem)
+	if l < 2 {
+		return 0, fmt.Errorf("invalid memory swap string: %s", strmem)
+	}
+	ival, err := strconv.Atoi(strmem[0 : l-1])
+	if err != nil {
+		return 0, err
+	}
+
+	switch strmem[l-1] {
+	case 'b':
+		return int64(ival), nil
+	case 'k':
+		return int64(ival) * 1024, nil
+	case 'm':
+		return int64(ival) * 1024 * 1024, nil
+	case 'g':
+		return int64(ival) * 1024 * 1024 * 1024, nil
+	default:
+		return 0, fmt.Errorf("invalid memory swap string: %s", strmem)
 	}
 }

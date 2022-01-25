@@ -4,7 +4,12 @@ data_dir = "/tmp/nomad"
 plugin "containerd-driver" {
   config {
     enabled = true
+    containerd_runtime = "io.containerd.runc.v1"
     stats_interval = "5s"
+
+    auth_helper {
+      helper = "/usr/bin/docker-credential-gcr"
+    }
   }
 }
 
